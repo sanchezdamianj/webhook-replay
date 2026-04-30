@@ -6,6 +6,7 @@ import { corsOrigin, databaseUrl, env } from "./config/env.js";
 import { createDb } from "./db/client.js";
 import { registerV1Routes } from "./http/v1Routes.js";
 import { replayQueue } from "./jobs/replayQueue.js";
+import { logExportQueue } from "./jobs/logExportQueue.js";
 
 async function main() {
   const redisPublisher = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
@@ -25,6 +26,7 @@ async function main() {
     db,
     env,
     replayQueue,
+    logExportQueue,
     redis: redisPublisher,
   });
 
@@ -70,6 +72,7 @@ async function main() {
     await redisSubscriber.quit();
     await redisPublisher.quit();
     await replayQueue.close();
+    await logExportQueue.close();
     await pool.end().catch(() => {});
     app.log.info("shutdown_done");
     process.exit(0);

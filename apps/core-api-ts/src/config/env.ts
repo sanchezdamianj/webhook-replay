@@ -16,6 +16,8 @@ const envSchema = z.object({
   REPLAY_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),
   REPLAY_BASE_BACKOFF_SECONDS: z.coerce.number().positive().default(1),
   REPLAY_MAX_RESPONSE_BYTES: z.coerce.number().int().positive().default(16_384),
+  EXPORT_DIR: z.string().default("/tmp/webhook-replay-exports"),
+  EXPORT_TTL_HOURS: z.coerce.number().int().positive().default(24),
 });
 
 export type Env = ReturnType<typeof envSchema.parse>;

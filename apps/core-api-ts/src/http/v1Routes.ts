@@ -16,6 +16,8 @@ import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { publishDeliveryAttempt } from "../realtime/publisher.js";
 import { serializeAttempt } from "../serialize.js";
+import type { LogExportJobData, LogExportJobResult } from "../jobs/logExportQueue.js";
+import fs from "node:fs";
 
 const PAGE_SIZE = 50;
 
@@ -28,6 +30,7 @@ export type V1Deps = {
   db: Db;
   env: Env;
   replayQueue: Queue<{ deliveryAttemptId: number }, void, string>;
+  logExportQueue: Queue<LogExportJobData, LogExportJobResult, string>;
   redis: Redis;
 };
 
@@ -77,7 +80,7 @@ async function authenticate(
 }
 
 export async function registerV1Routes(app: FastifyInstance, deps: V1Deps) {
-  const { db, env, replayQueue, redis } = deps;
+  const { db, env, replayQueue, logExportQueue, redis } = deps;
 
   app.get("/v1/status", async (_req, reply) => {
     await reply.send({ ok: true, service: "core-api" });
@@ -547,5 +550,120 @@ export async function registerV1Routes(app: FastifyInstance, deps: V1Deps) {
     await reply.send({
       attempts: attempts.map((row) => serializeAttempt(row.a)),
     });
+  });
+
+  app.post("/v1/exports/logs", async (req, reply) => {
+    const ctx = await authenticate(req, reply, deps);
+    if (!ctx) return;
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const destinationIdRaw = body.destination_id;
+    const receivedAtFromRaw = body.received_at_from;
+    const receivedAtToRaw = body.received_at_to;
+
+    const destinationId =
+      destinationIdRaw == null || destinationIdRaw === ""
+        ? null
+        : typeof destinationIdRaw === "number"
+          ? destinationIdRaw
+          : Number(destinationIdRaw);
+    if (destinationId != null && !Number.isFinite(destinationId)) {
+      await reply.code(422).send({ error: "validation_error", details: { destination_id: ["invalid"] } });
+      return;
+    }
+
+    const receivedAtFrom = typeof receivedAtFromRaw === "string" ? receivedAtFromRaw : null;
+    const receivedAtTo = typeof receivedAtToRaw === "string" ? receivedAtToRaw : null;
+
+    const job = await logExportQueue.add(
+      "export_logs",
+      {
+        accountId: ctx.account.id,
+        requestedByUserId: ctx.user.id,
+        destinationId,
+        receivedAtFrom,
+        receivedAtTo,
+      },
+      {
+        removeOnComplete: false,
+        removeOnFail: false,
+      }
+    );
+
+    await reply.code(202).send({ export_id: job.id, status: "queued" });
+  });
+
+  app.get("/v1/exports/logs/:id", async (req, reply) => {
+    const ctx = await authenticate(req, reply, deps);
+    if (!ctx) return;
+
+    const id = (req.params as { id: string }).id;
+    const job = await logExportQueue.getJob(id);
+    if (!job) {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+
+    const data = job.data as LogExportJobData;
+    if (data.accountId !== ctx.account.id) {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+
+    const state = await job.getState();
+    const result = (job.returnvalue ?? null) as LogExportJobResult | null;
+
+    await reply.send({
+      export_id: job.id,
+      status: state,
+      result,
+      failed_reason: job.failedReason ?? null,
+    });
+  });
+
+  app.get("/v1/exports/logs/:id/download", async (req, reply) => {
+    const ctx = await authenticate(req, reply, deps);
+    if (!ctx) return;
+
+    const id = (req.params as { id: string }).id;
+    const job = await logExportQueue.getJob(id);
+    if (!job) {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+
+    const data = job.data as LogExportJobData;
+    if (data.accountId !== ctx.account.id) {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+
+    const state = await job.getState();
+    if (state !== "completed") {
+      await reply.code(409).send({ error: "not_ready", status: state });
+      return;
+    }
+
+    const result = job.returnvalue as LogExportJobResult | undefined;
+    if (!result?.filePath) {
+      await reply.code(500).send({ error: "missing_artifact" });
+      return;
+    }
+
+    const expiresAtMs = Date.parse(result.expiresAt);
+    if (Number.isFinite(expiresAtMs) && Date.now() > expiresAtMs) {
+      await reply.code(410).send({ error: "expired" });
+      return;
+    }
+
+    const stream = fs.createReadStream(result.filePath);
+    stream.on("error", async () => {
+      if (!reply.sent) await reply.code(404).send({ error: "not_found" });
+    });
+
+    reply
+      .header("Content-Type", "application/x-ndjson; charset=utf-8")
+      .header("Content-Disposition", `attachment; filename="${result.fileName}"`);
+    await reply.send(stream);
   });
 }
