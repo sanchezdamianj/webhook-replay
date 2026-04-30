@@ -2,9 +2,9 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // There is also a root `package-lock.json` for `apps/gateway`; pin Turbopack to this app.
+  // pnpm stores Next under the monorepo node_modules path, so Turbopack needs the workspace root.
   turbopack: {
-    root: path.join(__dirname),
+    root: path.join(__dirname, "../.."),
   },
 };
 

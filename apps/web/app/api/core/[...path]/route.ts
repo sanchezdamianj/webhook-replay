@@ -24,14 +24,17 @@ async function proxy(req: Request, params: { path: string[] }) {
   });
 
   const contentType = res.headers.get("content-type") ?? "application/json";
+  const responseHeaders = new Headers({
+    "content-type": contentType,
+    "cache-control": "no-store",
+  });
+  const contentDisposition = res.headers.get("content-disposition");
+  if (contentDisposition) responseHeaders.set("content-disposition", contentDisposition);
   const bodyText = await res.text();
 
   return new NextResponse(bodyText, {
     status: res.status,
-    headers: {
-      "content-type": contentType,
-      "cache-control": "no-store",
-    },
+    headers: responseHeaders,
   });
 }
 

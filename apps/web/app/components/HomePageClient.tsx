@@ -4,7 +4,14 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, apiMe, apiUpdateUiFlags } from "../lib/api";
 import { subscribeToDeliveryAttempts } from "../lib/realtime";
-import type { DeliveryAttempt, Destination, EventDetail, EventRow } from "../lib/types";
+import type {
+  DeliveryAttempt,
+  Destination,
+  EventDetail,
+  EventRow,
+  LogExportCreateResponse,
+  LogExportStatus,
+} from "../lib/types";
 import MarketingLanding from "./MarketingLanding";
 import { useToasts } from "./ToastHost";
 import CommandPalette from "./CommandPalette";
@@ -103,6 +110,10 @@ function Dashboard({
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const [eventDetailOpen, setEventDetailOpen] = useState(false);
   const [selectedAttemptId, setSelectedAttemptId] = useState<number | null>(null);
+  const [exportScope, setExportScope] = useState<"current" | "all">("current");
+  const [exportFromLocal, setExportFromLocal] = useState("");
+  const [exportToLocal, setExportToLocal] = useState("");
+  const [logExportId, setLogExportId] = useState<string | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
@@ -146,6 +157,13 @@ function Dashboard({
   });
 
   const attempts = attemptsQ.data?.attempts ?? [];
+
+  const logExportQ = useQuery<LogExportStatus>({
+    queryKey: ["log-export", logExportId],
+    enabled: logExportId != null,
+    queryFn: async () => await apiFetch<LogExportStatus>(`/v1/exports/logs/${logExportId}`),
+    refetchInterval: (query) => (isLogExportTerminal(query.state.data?.status) ? false : 2000),
+  });
 
   const selectedDestination = useMemo(
     () => destinations.find((d) => d.id === selectedDestinationId) ?? null,
@@ -279,6 +297,54 @@ function Dashboard({
       await loadEvent(eventId);
       await loadAttempts(eventId);
       toasts.push({ kind: "success", title: "Replay queued", detail: `Event ${eventId}` });
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  const createLogExportM = useMutation({
+    mutationFn: async ({
+      destinationId,
+      receivedAtFrom,
+      receivedAtTo,
+    }: {
+      destinationId: number | null;
+      receivedAtFrom: string | null;
+      receivedAtTo: string | null;
+    }) =>
+      await apiFetch<LogExportCreateResponse>("/v1/exports/logs", {
+        method: "POST",
+        body: JSON.stringify({
+          destination_id: destinationId,
+          received_at_from: receivedAtFrom,
+          received_at_to: receivedAtTo,
+        }),
+      }),
+    onSuccess: (data) => {
+      setLogExportId(data.export_id);
+      toasts.push({ kind: "success", title: "Export queued", detail: `Job ${data.export_id}` });
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
+
+  async function createLogExport() {
+    const destinationId = exportScope === "current" ? selectedDestinationId : null;
+    if (exportScope === "current" && destinationId == null) {
+      setError("Select a destination before exporting current destination logs.");
+      return;
+    }
+
+    const receivedAtFrom = datetimeLocalToIso(exportFromLocal);
+    const receivedAtTo = datetimeLocalToIso(exportToLocal);
+    if (receivedAtFrom && receivedAtTo && Date.parse(receivedAtFrom) > Date.parse(receivedAtTo)) {
+      setError("The export start date must be before the end date.");
+      return;
+    }
+
+    setLoading("Queueing log export...");
+    setError(null);
+    try {
+      await createLogExportM.mutateAsync({ destinationId, receivedAtFrom, receivedAtTo });
     } finally {
       setLoading(null);
     }
@@ -507,6 +573,20 @@ function Dashboard({
           </div>
 
           <CreateDestinationCard onCreate={createDestination} loading={loading != null} />
+
+          <LogExportCard
+            scope={exportScope}
+            onScopeChange={setExportScope}
+            fromLocal={exportFromLocal}
+            onFromLocalChange={setExportFromLocal}
+            toLocal={exportToLocal}
+            onToLocalChange={setExportToLocal}
+            selectedDestination={selectedDestination}
+            exportStatus={logExportQ.data ?? null}
+            isStatusLoading={logExportQ.isFetching}
+            isCreating={createLogExportM.isPending}
+            onCreate={() => createLogExport().catch((e) => setError(String(e?.message ?? e)))}
+          />
         </section>
 
         <section className="lg:col-span-2 space-y-4">
@@ -924,6 +1004,163 @@ function Dashboard({
       ) : null}
     </div>
   );
+}
+
+function LogExportCard({
+  scope,
+  onScopeChange,
+  fromLocal,
+  onFromLocalChange,
+  toLocal,
+  onToLocalChange,
+  selectedDestination,
+  exportStatus,
+  isStatusLoading,
+  isCreating,
+  onCreate,
+}: {
+  scope: "current" | "all";
+  onScopeChange: (scope: "current" | "all") => void;
+  fromLocal: string;
+  onFromLocalChange: (value: string) => void;
+  toLocal: string;
+  onToLocalChange: (value: string) => void;
+  selectedDestination: Destination | null;
+  exportStatus: LogExportStatus | null;
+  isStatusLoading: boolean;
+  isCreating: boolean;
+  onCreate: () => void;
+}) {
+  const status = exportStatus?.status ?? null;
+  const ready = status === "completed" && exportStatus?.result != null;
+  const canCreate = scope === "all" || selectedDestination != null;
+
+  return (
+    <div className="rounded-xl border border-black/10 dark:border-white/10 p-4" data-tour="log-export">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-semibold">Download logs</div>
+          <div className="mt-1 text-xs opacity-70">Export webhook events and attempts as JSONL.</div>
+        </div>
+        {status ? <LogExportStatusBadge status={status} /> : null}
+      </div>
+
+      <div className="mt-3 space-y-2">
+        <label className="block">
+          <span className="text-xs opacity-70">Scope</span>
+          <select
+            className="mt-1 w-full rounded-lg border border-black/10 dark:border-white/10 bg-transparent px-3 py-2 text-sm"
+            value={scope}
+            onChange={(e) => onScopeChange(e.target.value as "current" | "all")}
+          >
+            <option value="current">
+              Current destination{selectedDestination ? `: ${selectedDestination.name}` : ""}
+            </option>
+            <option value="all">All destinations</option>
+          </select>
+        </label>
+
+        <div className="grid grid-cols-1 gap-2">
+          <label className="block">
+            <span className="text-xs opacity-70">Received from</span>
+            <input
+              className="mt-1 w-full rounded-lg border border-black/10 dark:border-white/10 bg-transparent px-3 py-2 text-sm"
+              type="datetime-local"
+              value={fromLocal}
+              onChange={(e) => onFromLocalChange(e.target.value)}
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs opacity-70">Received to</span>
+            <input
+              className="mt-1 w-full rounded-lg border border-black/10 dark:border-white/10 bg-transparent px-3 py-2 text-sm"
+              type="datetime-local"
+              value={toLocal}
+              onChange={(e) => onToLocalChange(e.target.value)}
+            />
+          </label>
+        </div>
+
+        <button
+          className="w-full text-sm rounded-lg bg-black text-white dark:bg-white dark:text-black px-3 py-2 hover:opacity-90 disabled:opacity-50"
+          disabled={!canCreate || isCreating}
+          onClick={onCreate}
+        >
+          {isCreating ? "Queueing..." : "Create export"}
+        </button>
+
+        {!canCreate ? (
+          <div className="text-xs text-amber-700 dark:text-amber-300">Select a destination or export all logs.</div>
+        ) : null}
+      </div>
+
+      {exportStatus ? (
+        <div className="mt-4 rounded-lg border border-black/10 dark:border-white/10 p-3 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-medium">Job {exportStatus.export_id}</div>
+            <div className="opacity-70">{isStatusLoading && !ready ? "checking..." : "latest status"}</div>
+          </div>
+
+          {exportStatus.failed_reason ? (
+            <div className="mt-2 text-red-600 dark:text-red-400">{exportStatus.failed_reason}</div>
+          ) : null}
+
+          {exportStatus.result ? (
+            <div className="mt-2 space-y-1 opacity-80">
+              <div>{exportStatus.result.fileName}</div>
+              <div>{formatBytes(exportStatus.result.bytes)} · expires {formatIso(exportStatus.result.expiresAt)}</div>
+            </div>
+          ) : (
+            <div className="mt-2 opacity-70">The worker is preparing the export artifact.</div>
+          )}
+
+          <a
+            className={`mt-3 inline-flex w-full items-center justify-center rounded-lg border px-3 py-2 text-sm ${
+              ready
+                ? "border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/10"
+                : "pointer-events-none border-black/5 opacity-40 dark:border-white/5"
+            }`}
+            href={ready ? `/api/core/v1/exports/logs/${exportStatus.export_id}/download` : "#"}
+          >
+            Download JSONL
+          </a>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function LogExportStatusBadge({ status }: { status: string }) {
+  const cls = status === "completed"
+    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+    : status === "failed"
+      ? "bg-red-500/15 text-red-700 dark:text-red-300"
+      : "bg-sky-500/15 text-sky-700 dark:text-sky-300";
+
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>
+      {status}
+    </span>
+  );
+}
+
+function isLogExportTerminal(status: string | null | undefined) {
+  return status === "completed" || status === "failed";
+}
+
+function datetimeLocalToIso(value: string) {
+  if (value.trim() === "") return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes)) return "-";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
 }
 
 function filteredEvents(events: EventRow[], filter: "all" | "ok" | "failed" | "pending" | "never") {

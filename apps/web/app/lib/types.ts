@@ -46,3 +46,23 @@ export type DeliveryAttempt = {
   duration_ms: number | null;
 };
 
+export type LogExportCreateResponse = {
+  export_id: string;
+  status: string;
+};
+
+export type LogExportResult = {
+  format: "jsonl";
+  fileName: string;
+  bytes: number;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type LogExportStatus = {
+  export_id: string;
+  status: string;
+  result: LogExportResult | null;
+  failed_reason: string | null;
+};
+
