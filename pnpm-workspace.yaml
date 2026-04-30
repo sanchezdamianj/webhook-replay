@@ -1,0 +1,10 @@
+packages:
+  - "apps/*"
+
+onlyBuiltDependencies:
+  - bcrypt
+  - esbuild
+  - msgpackr-extract
+  - sharp
+  - unrs-resolver
+

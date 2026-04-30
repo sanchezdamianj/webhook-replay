@@ -1,0 +1,20 @@
+import type { InferSelectModel } from "drizzle-orm";
+import type { deliveryAttempts } from "./db/schema.js";
+export type DeliveryAttemptRow = InferSelectModel<typeof deliveryAttempts>;
+export declare function serializeAttempt(a: DeliveryAttemptRow): {
+    id: number;
+    webhook_event_id: number;
+    destination_id: number;
+    kind: string;
+    attempt_number: number;
+    retry_of_id: number | null;
+    requested_at: string;
+    completed_at: string | null;
+    response_status: number | null;
+    response_content_type: string | null;
+    response_headers: {};
+    response_body: string | null;
+    error_category: string | null;
+    error_message: string | null;
+    duration_ms: number | null;
+};

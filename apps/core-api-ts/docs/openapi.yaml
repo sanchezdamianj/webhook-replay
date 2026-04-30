@@ -1,0 +1,197 @@
+openapi: 3.1.0
+info:
+  title: Webhook Replay Core API (v1)
+  version: "1.0"
+  description: |
+    Contrato HTTP del core-api (paridad con Rails). WebSocket en tiempo real usa Socket.IO
+    en el mismo host (puerto API); ver sección Realtime.
+
+servers:
+  - url: http://localhost:3000
+
+paths:
+  /v1/status:
+    get:
+      summary: Health / status
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              example: { ok: true, service: core-api }
+
+  /v1/auth/signup:
+    post:
+      summary: Sign up
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, account_name]
+              properties:
+                email: { type: string }
+                password: { type: string }
+                account_name: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              example:
+                token: "<jwt>"
+                user: { id: 1, email: "a@b.com", ui_flags: {} }
+                account: { id: 1, name: "Org" }
+
+  /v1/auth/login:
+    post:
+      summary: Login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+      responses:
+        "200":
+          content:
+            application/json:
+              example:
+                token: "<jwt>"
+                user: { id: 1, email: "a@b.com", ui_flags: {} }
+                account: { id: 1, name: "Org" }
+        "401":
+          example: { error: invalid_credentials }
+
+  /v1/me:
+    get:
+      summary: Current user + account
+      security: [bearerAuth]
+      responses:
+        "200":
+          content:
+            application/json:
+              example:
+                user: { id: 1, email: "a@b.com", ui_flags: {} }
+                account: { id: 1, name: "Org" }
+
+  /v1/me/ui_flags:
+    patch:
+      summary: Merge UI flags (JSON object merge)
+      security: [bearerAuth]
+      requestBody:
+        content:
+          application/json:
+            example: { ui_flags: { onboarding_seen_v1: true } }
+      responses:
+        "200":
+          example: { ok: true, ui_flags: { onboarding_seen_v1: true } }
+
+  /v1/destinations:
+    get:
+      security: [bearerAuth]
+      responses:
+        "200":
+          description: Array of destinations (newest first)
+    post:
+      security: [bearerAuth]
+      requestBody:
+        content:
+          application/json:
+            example: { destination: { name: "x", target_url: "https://example.com/hook" } }
+
+  /v1/destinations/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+    get:
+      security: [bearerAuth]
+    patch:
+      security: [bearerAuth]
+      requestBody:
+        content:
+          application/json:
+            example: { destination: { name: "x", target_url: "https://example.com/hook" } }
+    delete:
+      security: [bearerAuth]
+      responses:
+        "204":
+          description: No content
+
+  /v1/events:
+    get:
+      security: [bearerAuth]
+      parameters:
+        - name: destination_id
+          in: query
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+      responses:
+        "200":
+          content:
+            application/json:
+              example:
+                page: 1
+                page_size: 50
+                events:
+                  - id: 1
+                    destination: { id: 1, name: "x", public_key: "uuid" }
+                    received_at: "2026-01-01T00:00:00Z"
+                    http_method: POST
+                    content_type: application/json
+                    latest_attempt: null
+
+  /v1/events/{id}:
+    get:
+      security: [bearerAuth]
+      responses:
+        "200":
+          description: Event detail
+
+  /v1/events/{event_id}/replay:
+    post:
+      security: [bearerAuth]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+      responses:
+        "202":
+          examples:
+            new:
+              value: { accepted: true, attempt_id: 12 }
+            idempotent:
+              value: { accepted: true, attempt_id: 12, idempotent: true }
+
+  /v1/delivery_attempts:
+    get:
+      security: [bearerAuth]
+      parameters:
+        - name: event_id
+          in: query
+      responses:
+        "200":
+          example:
+            attempts: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+tags:
+  - name: Realtime
+    description: |
+      Socket.IO conecta a `GET /socket.io` en el mismo origen que el API (ej. ws://localhost:3000).
+
+      1. Cliente emite `subscribe` con `{ event_id: number }`.
+      2. Servidor une el socket al room `attempts:event:{event_id}`.
+      3. En cada actualización de intento, servidor emite evento `delivery_attempt` con cuerpo:
+         `{ type: "delivery_attempt", attempt: { ... } }`
+         (mismo shape que ActionCable antes).

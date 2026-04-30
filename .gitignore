@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Node (root hoists; apps may add their own)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+logs/

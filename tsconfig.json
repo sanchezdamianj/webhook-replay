@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./apps/core-api-ts" },
+    { "path": "./apps/gateway" },
+    { "path": "./apps/web" }
+  ]
+}
+

@@ -1,0 +1,123 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: webhook_replay
+      POSTGRES_PASSWORD: webhook_replay
+      POSTGRES_DB: webhook_replay_development
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  core-api:
+    build: ./apps/core-api-ts
+    environment:
+      NODE_ENV: development
+      CI: "true"
+      PORT: 3000
+      JWT_SECRET: dev_secret_change_me
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: webhook_replay
+      POSTGRES_PASSWORD: webhook_replay
+      POSTGRES_DB: webhook_replay_development
+      REDIS_URL: redis://redis:6379/0
+      ALLOWED_ORIGINS: http://localhost:3002,http://127.0.0.1:3002
+    command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile=false && pnpm run dev"]
+    volumes:
+      - ./apps/core-api-ts:/app
+      - core_api_ts_node_modules:/app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  worker:
+    build: ./apps/core-api-ts
+    environment:
+      NODE_ENV: development
+      CI: "true"
+      JWT_SECRET: dev_secret_change_me
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: webhook_replay
+      POSTGRES_PASSWORD: webhook_replay
+      POSTGRES_DB: webhook_replay_development
+      REDIS_URL: redis://redis:6379/0
+    command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile=false && pnpm run dev:worker"]
+    volumes:
+      - ./apps/core-api-ts:/app
+      - core_api_ts_node_modules:/app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  gateway:
+    build: ./apps/gateway
+    environment:
+      NODE_ENV: development
+      CI: "true"
+      PORT: 3001
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: webhook_replay
+      POSTGRES_PASSWORD: webhook_replay
+      POSTGRES_DB: webhook_replay_development
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./apps/gateway:/app
+      - gateway_node_modules:/app/node_modules
+    command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile=false && pnpm run dev"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  receiver:
+    build: ./apps/receiver
+    environment:
+      PORT: 4000
+    ports:
+      - "4000:4000"
+
+  web:
+    build: ./apps/web
+    environment:
+      CI: "true"
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:3000
+      NEXT_INTERNAL_API_BASE_URL: http://core-api:3000
+    ports:
+      - "3002:3000"
+    volumes:
+      - ./apps/web:/app
+      - web_node_modules:/app/node_modules
+    command: sh -c "corepack enable && pnpm install --frozen-lockfile=false && pnpm exec next dev --hostname 0.0.0.0 --port 3000"
+    depends_on:
+      - core-api
+
+volumes:
+  postgres_data:
+  gateway_node_modules:
+  web_node_modules:
+  core_api_ts_node_modules:

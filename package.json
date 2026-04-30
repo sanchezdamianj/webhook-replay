@@ -1,0 +1,22 @@
+{
+  "name": "webhook-replay",
+  "private": true,
+  "packageManager": "pnpm@10.8.1",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:web": "pnpm -C apps/web dev",
+    "dev:gateway": "pnpm -C apps/gateway dev",
+    "dev:core-api": "pnpm -C apps/core-api-ts dev",
+    "dev:worker": "pnpm -C apps/core-api-ts dev:worker",
+    "lint:web": "pnpm -C apps/web lint"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "bcrypt",
+      "esbuild",
+      "msgpackr-extract",
+      "sharp",
+      "unrs-resolver"
+    ]
+  }
+}
