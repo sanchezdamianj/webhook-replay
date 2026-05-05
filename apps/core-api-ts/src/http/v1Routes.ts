@@ -17,6 +17,7 @@ import type { Redis } from "ioredis";
 import { publishDeliveryAttempt } from "../realtime/publisher.js";
 import { serializeAttempt } from "../serialize.js";
 import type { LogExportJobData, LogExportJobResult } from "../jobs/logExportQueue.js";
+import { buildMockLogExportJsonl, mockLogExportFileName } from "../exports/mockLogExport.js";
 import fs from "node:fs";
 
 const PAGE_SIZE = 50;
@@ -665,5 +666,20 @@ export async function registerV1Routes(app: FastifyInstance, deps: V1Deps) {
       .header("Content-Type", "application/x-ndjson; charset=utf-8")
       .header("Content-Disposition", `attachment; filename="${result.fileName}"`);
     await reply.send(stream);
+  });
+
+  app.get("/v1/dev/exports/logs/mock/download", async (req, reply) => {
+    if (env.NODE_ENV === "production") {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+
+    const ctx = await authenticate(req, reply, deps);
+    if (!ctx) return;
+
+    reply
+      .header("Content-Type", "application/x-ndjson; charset=utf-8")
+      .header("Content-Disposition", `attachment; filename="${mockLogExportFileName(ctx.account.id)}"`);
+    await reply.send(buildMockLogExportJsonl(ctx.account.id));
   });
 }

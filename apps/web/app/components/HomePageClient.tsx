@@ -1034,6 +1034,7 @@ function LogExportCard({
   const status = exportStatus?.status ?? null;
   const ready = status === "completed" && exportStatus?.result != null;
   const canCreate = scope === "all" || selectedDestination != null;
+  const showMockDownload = process.env.NODE_ENV !== "production";
 
   return (
     <div className="rounded-xl border border-black/10 dark:border-white/10 p-4" data-tour="log-export">
@@ -1088,6 +1089,18 @@ function LogExportCard({
         >
           {isCreating ? "Queueing..." : "Create export"}
         </button>
+
+        {showMockDownload ? (
+          <button
+            className="inline-flex w-full items-center justify-center rounded-lg border border-dashed border-black/20 px-3 py-2 text-sm hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+            type="button"
+            onClick={() => {
+              window.location.href = "/api/core/v1/dev/exports/logs/mock/download";
+            }}
+          >
+            Download mock JSONL
+          </button>
+        ) : null}
 
         {!canCreate ? (
           <div className="text-xs text-amber-700 dark:text-amber-300">Select a destination or export all logs.</div>
